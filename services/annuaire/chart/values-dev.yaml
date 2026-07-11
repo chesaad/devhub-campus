@@ -8,7 +8,7 @@ ingress:
 env:
   LOG_LEVEL: debug
 
-replicaCount: 3
+replicaCount: 1
 
 image:
   tag: e0b228a
