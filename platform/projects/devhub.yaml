@@ -22,6 +22,10 @@ spec:
   destinations:
     - server: https://kubernetes.default.svc
       namespace: devhub-*
+    # la root Application (App of Apps) crée des ressources Application, qui
+    # vivent dans le namespace argocd lui-même — pas dans devhub-*.
+    - server: https://kubernetes.default.svc
+      namespace: argocd
 
   # Un namespace est une ressource cluster-scoped : sans ce whitelist,
   # syncOptions=CreateNamespace=true échoue silencieusement (refusé par l'AppProject).
