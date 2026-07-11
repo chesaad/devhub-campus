@@ -6,4 +6,4 @@ env:
   LOG_LEVEL: debug
 
 image:
-  tag: e0b228a
+  tag: 9bccd75
