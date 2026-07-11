@@ -4,11 +4,20 @@
 # leur subtilités piègent.
 #   Doc : https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/
 #
-# Deux options possibles :
-#   - `git` generator (sur branches) — le plus simple, polling 3 min.
-#   - `pullRequest` generator (sur PRs ouvertes) — requiert un token GitHub.
-#
-# Choisissez et justifiez dans RAPPORT.md.
+# Deux générateurs successivement essayés et rejetés avant celui-ci :
+#   1. `git` avec un champ `branches: [...]` — n'existe pas dans l'API réelle
+#      (le générateur git ne connaît que directories/files).
+#   2. `scmProvider.github` (scan par organisation) — échoue avec un 404 sur
+#      `github/orgs/<user>/repos` : ce générateur ne fonctionne QUE pour une
+#      organisation GitHub, pas pour un compte personnel (confirmé en
+#      interrogeant l'API GitHub directement : /orgs/chesaad = 404,
+#      /users/chesaad = 200).
+# Retenu : `pullRequest.github` (owner + repo, pas d'organisation requise) —
+# fonctionne sur un compte personnel, pas de token nécessaire sur un repo
+# public (rate-limit non authentifié suffisant en TP). Contrepartie assumée :
+# la preview se déclenche à l'ouverture d'une Pull Request, pas au simple push
+# d'une branche feature/* — plus proche d'un usage réel d'équipe de toute
+# façon (une preview sert à review une PR, pas une branche isolée).
 
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -16,20 +25,21 @@ metadata:
   name: annuaire-preview
   namespace: argocd
 spec:
-  # generator choisi : git (sur branches), pas pullRequest — pas de token GitHub
-  # à gérer/stocker en Secret pour ce TP, et le polling 3 min suffit pour la démo.
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
   generators:
-    - git:
-        repoURL: https://github.com/chesaad/devhub-campus.git
-        revision: HEAD
-        branches:
-          - feature/*
+    - pullRequest:
+        github:
+          owner: chesaad
+          repo: devhub-campus
+        requeueAfterSeconds: 60
 
   template:
     metadata:
-      # {{branchNormalized}} : la variable exposée par le git generator en mode
-      # `branches` — remplace déjà `/` par `-` pour rester un nom K8s valide.
-      name: annuaire-preview-{{branchNormalized}}
+      # {{ .branch }} peut contenir "/" (ex. feature/preview-demo) — non
+      # valide dans un nom K8s, d'où le replace explicite via Sprig
+      # (disponible grâce à goTemplate: true).
+      name: "annuaire-preview-{{ .branch | replace \"/\" \"-\" }}"
       labels:
         devhub.io/env: preview
         devhub.io/service: annuaire
@@ -37,17 +47,17 @@ spec:
       project: devhub
       source:
         repoURL: https://github.com/chesaad/devhub-campus.git
-        targetRevision: '{{branch}}'
+        targetRevision: "{{ .head_sha }}"
         path: services/annuaire/chart
         helm:
           valueFiles:
             - values-preview.yaml
           parameters:
             - name: ingress.host
-              value: "annuaire-{{branchNormalized}}.devhub.local"
+              value: "annuaire-{{ .branch | replace \"/\" \"-\" }}.devhub.local"
       destination:
         server: https://kubernetes.default.svc
-        namespace: devhub-preview-{{branchNormalized}}
+        namespace: "devhub-preview-{{ .branch | replace \"/\" \"-\" }}"
       syncPolicy:
         automated:
           prune: true       # IMPORTANT : indispensable pour nettoyer les previews

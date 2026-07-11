@@ -1,7 +1,6 @@
-# ApplicationSet preview pour planning.
-# Une fois annuaire-preview.yaml fait, dupliquez en adaptant.
-#
-# TODO : à compléter à partir du modèle annuaire.yaml.
+# ApplicationSet preview pour planning — même correction que annuaire.yaml
+# (git.branches n'existe pas ; scmProvider.github échoue sur compte
+# personnel ; pullRequest.github retenu, owner+repo, pas d'organisation).
 
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -9,15 +8,17 @@ metadata:
   name: planning-preview
   namespace: argocd
 spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
   generators:
-    - git:
-        repoURL: https://github.com/chesaad/devhub-campus.git
-        revision: HEAD
-        branches:
-          - feature/*
+    - pullRequest:
+        github:
+          owner: chesaad
+          repo: devhub-campus
+        requeueAfterSeconds: 60
   template:
     metadata:
-      name: planning-preview-{{branchNormalized}}
+      name: "planning-preview-{{ .branch | replace \"/\" \"-\" }}"
       labels:
         devhub.io/env: preview
         devhub.io/service: planning
@@ -25,17 +26,17 @@ spec:
       project: devhub
       source:
         repoURL: https://github.com/chesaad/devhub-campus.git
-        targetRevision: '{{branch}}'
+        targetRevision: "{{ .head_sha }}"
         path: services/planning/chart
         helm:
           valueFiles:
             - values-preview.yaml
           parameters:
             - name: ingress.host
-              value: "planning-{{branchNormalized}}.devhub.local"
+              value: "planning-{{ .branch | replace \"/\" \"-\" }}.devhub.local"
       destination:
         server: https://kubernetes.default.svc
-        namespace: devhub-preview-{{branchNormalized}}
+        namespace: "devhub-preview-{{ .branch | replace \"/\" \"-\" }}"
       syncPolicy:
         automated:
           prune: true
