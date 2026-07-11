@@ -1,0 +1,102 @@
+# Values Helm pour installer ArgoCD lui-même (chart argo/argo-cd).
+# Ce fichier est consommé par `make argocd-install`.
+#
+# Doc du chart : https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd
+#
+# Le but de ce fichier : exposer l'UI via l'ingress-nginx du cluster,
+# avec un host `argocd.devhub.local`. Le reste est laissé par défaut.
+
+global:
+  domain: argocd.devhub.local
+
+configs:
+  params:
+    # désactive le TLS interne — l'ingress-nginx est devant pour le HTTPS.
+    server.insecure: true
+  cm:
+    timeout.reconciliation: 180s
+    # compte non-admin utilisé pour les tests RBAC (étape 9). Mot de passe /
+    # apiKey à générer ensuite via `argocd account generate-token`.
+    accounts.dev-user: login
+
+  # RBAC : policy.default vide = tout est refusé par défaut, sauf ce qui est listé.
+  # Référence : https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/
+  rbac:
+    policy.default: ""
+    policy.csv: |
+      # dev-user : lecture sur tout le projet devhub, sync limité aux Applications
+      # dont le nom commence par "annuaire" (glob, pas une regex POSIX).
+      p, role:developer, applications, get, devhub/*, allow
+      p, role:developer, applications, sync, devhub/annuaire-*, allow
+      g, dev-user, role:developer
+
+      # platform-admin : tous les droits (admin reste par ailleurs le superuser ArgoCD).
+      p, role:platform-admin, applications, *, devhub/*, allow
+      p, role:platform-admin, clusters, get, *, allow
+      p, role:platform-admin, repositories, *, *, allow
+      g, admin, role:platform-admin
+
+server:
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: argocd.devhub.local
+    annotations:
+      # ArgoCD termine son propre TLS en interne. On dit à l'ingress
+      # de ne pas refaire de TLS terminaison côté server.
+      nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    tls: false
+  metrics:
+    enabled: true
+
+# Notifications (étape 9) : sur échec de sync, POST vers un webhook (webhook.site
+# en TP). L'URL réelle vit dans le Secret `argocd-notifications-secret`
+# (clé webhook-url) — jamais commitée en clair, à créer avec :
+#   kubectl -n argocd create secret generic argocd-notifications-secret \
+#     --from-literal=webhook-url=https://webhook.site/<votre-id>
+notifications:
+  enabled: true
+  notifiers:
+    service.webhook.devhub-webhook: |
+      url: $webhook-url
+      headers:
+        - name: Content-Type
+          value: application/json
+  subscriptions:
+    - recipients:
+        - devhub-webhook
+      triggers:
+        - on-sync-failed
+  templates:
+    template.sync-failed: |
+      webhook:
+        devhub-webhook:
+          method: POST
+          body: |
+            {
+              "application": "{{.app.metadata.name}}",
+              "revision": "{{.app.status.sync.revision}}",
+              "message": "{{.app.status.operationState.message}}"
+            }
+  triggers:
+    trigger.on-sync-failed: |
+      - when: app.status.operationState.phase in ['Error', 'Failed']
+        send: [sync-failed]
+
+# Garde-fou ressources — utile en TP pour ne pas saturer la machine.
+# metrics.enabled expose le endpoint /metrics Prometheus de chaque composant
+# (étape 9) — à scraper avec `kubectl port-forward` + curl en TP, faute de
+# Prometheus déployé dans le cluster.
+controller:
+  metrics:
+    enabled: true
+  resources:
+    requests: { cpu: "50m", memory: "256Mi" }
+    limits:   { cpu: "1",   memory: "1Gi" }
+
+repoServer:
+  metrics:
+    enabled: true
+  resources:
+    requests: { cpu: "50m", memory: "128Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
